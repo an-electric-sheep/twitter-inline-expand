@@ -1,6 +1,6 @@
 # Twitter Inline Expansion
 
-Userscript for inline-expansion of `:orig` full-resolution twitter images
+Userscript for inline-expansion of `:orig` full-resolution twitter images. Also works on `mobile.twitter.com`.
 
 <a href="twitter-orig.user.js?raw=true">Install Link</a>
 
