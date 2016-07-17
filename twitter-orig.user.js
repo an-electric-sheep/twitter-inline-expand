@@ -6,39 +6,44 @@
 // @version     0.1
 // @run-at			document-start
 // @noframes
-// @grant       none
+// @grant       unsafeWindow
 // ==/UserScript==
 
 'use strict';
 
-const cssPrefix = "mediatweaksuserscript"
+const cssPrefix = "mediatweaksuserscript";
 
 // normal + mobile page
 const TweetImageSelector = `
-	.tweet .js-adaptive-media-container img ,
+	.tweet .js-adaptive-photo img ,
 	.Tweet .CroppedPhoto img
-`
+`;
 	
+const TweetVideoSelector = ".AdaptiveMedia-video iframe";
+
+let alreadyVisited = new WeakSet();
+
 	
 function prefixed(str) {
 	return cssPrefix + str;	
 }
-	
-let alreadyVisited = new WeakSet()
+
 
 function mutationObserverCallback(mutations) {
 	setTimeout(() => {
 		try {
-			console.log(mutations)
 			for(let mutation of mutations) {
 				if(mutation.type != "childList")
 					continue;
-				for(let node of mutation.addedNodes) {
+				for(let node of [mutation.target, ...mutation.addedNodes]) {
 					if(node.nodeType != Node.ELEMENT_NODE)
 						continue;
+
 					onAddedNode(node)
+					for(let subNode of node.querySelectorAll(TweetVideoSelector))
+						onAddedNode(subNode);
 					for(let subNode of node.querySelectorAll(TweetImageSelector))
-						onAddedNode(subNode)
+						onAddedNode(subNode);
 				}
 			}
 		} catch(e) {
@@ -47,31 +52,139 @@ function mutationObserverCallback(mutations) {
 	}, 1)
 }
 
-function onAddedNode(node) {
-	if(node.matches(TweetImageSelector)) {
-		if(!alreadyVisited.has(node)) {
-			alreadyVisited.add(node)
-			addControls(node.closest(".tweet, .Tweet"),node)
-		}
-	}
-			
-			
+function visitOnce(element, func) {
+	if(alreadyVisited.has(element))
+		return;
+	alreadyVisited.add(element);
+	func()
 }
 
-function addControls(target, image) {
-	let src = image.src;
-	let origSrc = src + ":orig"
+function onAddedNode(node) {
+	if(node.matches(TweetImageSelector)) {
+		visitOnce(node, () => {
+			addImageControls(node.closest(".tweet, .Tweet"),node);
+		})
+	}
 	
+	if(node.matches(TweetVideoSelector)) {
+		visitOnce(node, () => {
+			addVideoControls(node.closest(".tweet"), node)
+		})
+	}
+}
+
+function controlContainer(target) {
 	let div = target.querySelector(`.${cssPrefix}-thumbs-container`);
 	if(!div) {
 		div = document.createElement("div")
 		target.appendChild(div)
-		div.className = `${cssPrefix}-thumbs-container`
-	}
+		div.className = prefixed("-thumbs-container")
+	}		
+	
+	return div;
+}
+
+function addImageControls(tweetContainer, image) {
+	let src = image.src;
+	let origSrc = src + ":orig"
+	
+	let div = controlContainer(tweetContainer);
 	
 	div.insertAdjacentHTML("beforeend", `
 			<a class="${cssPrefix}-orig-link" data-${cssPrefix}-small="${src}" href="${origSrc}"><img class="${cssPrefix}-thumb" src="${src}"></a>
 	`)
+}
+
+function addVideoControls(tweetContainer, iframe) {
+	
+	let baseURL = null;
+	let mediaConfig = null;
+	
+	let chunkUrlPromise = new Promise((resolve, reject) => {
+		if(iframe.contentDocument.readyState == "interactive" || iframe.contentDocument.readyState == "complete") {
+			resolve(iframe.contentDocument)
+			return;
+		}
+		
+		iframe.addEventListener("load", () => resolve(iframe.contentDocument))
+	}).then((contentDoc) => {
+		let config = JSON.parse(contentDoc.querySelector(".player-container").dataset.config)
+		
+		mediaConfig = config;
+		baseURL = config.video_url; 
+		
+		console.log(config)
+		
+		if(config.content_type != "application/x-mpegURL")
+			throw new Error(`fetching for content type "${config.content_type}" not implemented`);
+		
+		return fetch(config.video_url, {redirect: "follow", mode: "cors"}).then((response) => {
+			return response.text()
+		})
+	}).then((playlist) => {
+		let highestResolution = playlist.split(/\n/).filter(str => !str.startsWith("#")).filter(str => str.length > 0).pop()
+		let fetchUrl = new URL(baseURL)
+		fetchUrl.pathname = highestResolution
+		return fetch(fetchUrl, {mode: "cors", redirects: "follow"});
+	}).then((response) => {
+		return response.text()
+	}).then((chunkList) => {
+		chunkList = chunkList.split(/\n/).filter(s => !s.startsWith("#")).filter(s => s.length > 0).map(chunk => {
+			let u = new URL(baseURL);
+			u.pathname = chunk;
+			return u;
+		})
+		return chunkList;
+	});
+	
+	const controls = controlContainer(tweetContainer)
+	
+	controls.insertAdjacentHTML("beforeend", `
+		<a download="${Date.now()}.ts" href="#">download</a><span class="${cssPrefix}-progress"></span>
+	`)
+	
+	let finalBlob = null;	
+	const link = controls.querySelector("a[download]");
+	
+	chunkUrlPromise.catch(err => {
+		controls.insertAdjacentHTML("beforeend", `
+			<span class="${cssPrefix}-error">
+				An error occured while attempting to piece together the video download:
+				${err.toString()}
+			</span>
+		`)
+	})
+	
+	chunkUrlPromise.then((unused) => {
+		let filename = `@${mediaConfig.user.screen_name} ${mediaConfig.tweet_id}.ts`
+		link.download = filename;
+		link.appendChild(document.createTextNode(": " + filename))
+	})
+	
+	
+	link.addEventListener("click", (e) => {
+		if(finalBlob != null)
+			return;
+		
+		e.preventDefault();
+		
+		chunkUrlPromise.then((urls) => {
+			
+			Promise.all(urls.map(u => {
+				return fetch(u.toString(), {mode: "cors", redirects: "follow"}).then(response => response.blob())
+			})).then(blobs => {
+				finalBlob = new Blob(blobs);
+				
+				link.href = URL.createObjectURL(finalBlob);
+
+				// fire new click event since we prevent-defaulted it earlier
+				link.click();
+			})
+			
+			
+		})
+				
+	})
 }
 
 let observer = null 
@@ -80,7 +193,7 @@ function init() {
 	const config = { subtree: true, childList: true };
 	
 	observer = new MutationObserver(mutationObserverCallback);
-	observer.observe(document, config);
+	observer.observe(document.documentElement, config);
 	
 	document.addEventListener("DOMContentLoaded", ready)
 	document.addEventListener("click", thumbToggle)
