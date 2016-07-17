@@ -90,12 +90,11 @@ function init() {
 function thumbToggle(event) {
 	if(event.button != 0)
 		return;
-	let img = event.target;
-	if(!img.matches(`.${cssPrefix}-orig-link img`))
+	let link = event.target.closest(`.${cssPrefix}-orig-link`); 
+	if(!link)
 		return;
+	let img = link.querySelector("img");
 
-	let link = img.parentElement
-	
 	event.preventDefault();
 	
 	if(link.classList.contains(prefixed("-expanded"))) {
