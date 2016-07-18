@@ -95,28 +95,22 @@ function addImageControls(tweetContainer, image) {
 	`)
 }
 
-function addVideoControls(tweetContainer, iframe) {
-	
-	let baseURL = null;
-	let mediaConfig = null;
-	
-	let chunkUrlPromise = new Promise((resolve, reject) => {
-		if(iframe.contentDocument.readyState == "interactive" || iframe.contentDocument.readyState == "complete") {
-			resolve(iframe.contentDocument)
-			return;
+const supportedContentTypes = {
+		["video/mp4"]: {
+			ext: "mp4",
+			loader:	fetchMP4
+		},
+		["application/x-mpegURL"]: {
+			ext: "ts",
+			loader: fetchMpegTs
 		}
-		
-		iframe.addEventListener("load", () => resolve(iframe.contentDocument))
-	}).then((contentDoc) => {
-		let config = JSON.parse(contentDoc.querySelector(".player-container").dataset.config)
-		
-		mediaConfig = config;
-		baseURL = config.video_url; 
-		
-		console.log(config)
-		
-		if(config.content_type != "application/x-mpegURL")
-			throw new Error(`fetching for content type "${config.content_type}" not implemented`);
+}
+
+function fetchMpegTs(configPromise) {
+	let baseURL = null;
+	
+	return configPromise.then(config => {
+		baseURL = config.video_url
 		
 		return fetch(config.video_url, {redirect: "follow", mode: "cors"}).then((response) => {
 			return response.text()
@@ -129,13 +123,50 @@ function addVideoControls(tweetContainer, iframe) {
 	}).then((response) => {
 		return response.text()
 	}).then((chunkList) => {
-		chunkList = chunkList.split(/\n/).filter(s => !s.startsWith("#")).filter(s => s.length > 0).map(chunk => {
+		return chunkList.split(/\n/).filter(s => !s.startsWith("#")).filter(s => s.length > 0).map(chunk => {
 			let u = new URL(baseURL);
 			u.pathname = chunk;
 			return u;
 		})
-		return chunkList;
-	});
+	}).then((urls) => {
+		return Promise.all(urls.map(u => {
+			return fetch(u.toString(), {mode: "cors", redirects: "follow"}).then(response => response.blob())
+		}));
+	}).then(blobs => {
+			return new Blob(blobs);
+	})
+}
+
+function fetchMP4(configPromise) {
+	return configPromise.then(config => {
+		return fetch(config.video_url, {redirect: "follow", mode: "cors"}).then(response => response.blob())
+	})
+}
+
+
+function addVideoControls(tweetContainer, iframe) {
+	
+	let mediaConfig = null;
+	
+	let configPromise = new Promise((resolve, reject) => {
+		if(iframe.contentDocument.readyState == "interactive" || iframe.contentDocument.readyState == "complete") {
+			resolve(iframe.contentDocument)
+			return;
+		}
+		
+		iframe.addEventListener("load", () => resolve(iframe.contentDocument))
+	}).then((contentDoc) => {
+		let config = JSON.parse(contentDoc.querySelector(".player-container").dataset.config)
+		
+		mediaConfig = config;
+		
+		console.log(config)
+		
+		if(!(config.content_type in supportedContentTypes))
+			throw new Error(`fetching for content type "${config.content_type}" not implemented`);
+		
+		return config
+	})
 	
 	const controls = controlContainer(tweetContainer)
 	
@@ -146,17 +177,23 @@ function addVideoControls(tweetContainer, iframe) {
 	let finalBlob = null;	
 	const link = controls.querySelector("a[download]");
 	
-	chunkUrlPromise.catch(err => {
-		controls.insertAdjacentHTML("beforeend", `
-			<span class="${cssPrefix}-error">
-				An error occured while attempting to piece together the video download:
-				${err.toString()}
-			</span>
-		`)
-	})
+	let exceptionHandler = (message) => {
+		return (exception) => {
+			controls.insertAdjacentHTML("beforeend", `
+					<span class="${cssPrefix}-error">
+						${message}:
+						${exception.toString()}
+					</span>
+				`)
+		}
+	}
 	
-	chunkUrlPromise.then((unused) => {
-		let filename = `@${mediaConfig.user.screen_name} ${mediaConfig.tweet_id}.ts`
+	configPromise.catch(exceptionHandler("An error occured while reading the video metadata"))
+	
+	configPromise.then(config => {
+		const type = supportedContentTypes[config.content_type]
+		
+		let filename = `@${config.user.screen_name} ${config.tweet_id}.${type.ext}`
 		link.download = filename;
 		link.appendChild(document.createTextNode(": " + filename))
 	})
@@ -168,21 +205,18 @@ function addVideoControls(tweetContainer, iframe) {
 		
 		e.preventDefault();
 		
-		chunkUrlPromise.then((urls) => {
+		configPromise.then(config => {
+			const type = supportedContentTypes[config.content_type]
+			return type.loader(configPromise)
 			
-			Promise.all(urls.map(u => {
-				return fetch(u.toString(), {mode: "cors", redirects: "follow"}).then(response => response.blob())
-			})).then(blobs => {
-				finalBlob = new Blob(blobs);
-				
-				link.href = URL.createObjectURL(finalBlob);
+		}).then(blob => {
+			finalBlob = blob;
+			
+			link.href = URL.createObjectURL(finalBlob);
 
-				// fire new click event since we prevent-defaulted it earlier
-				link.click();
-			})
-			
-			
-		})
+			// fire new click event since we prevent-defaulted it earlier
+			link.click();
+		}).catch(exceptionHandler("An error occurred while downloading the video"))
 				
 	})
 }
