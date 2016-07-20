@@ -7,6 +7,7 @@
 // @run-at			document-start
 // @noframes
 // @grant       unsafeWindow
+// @grant				GM_xmlhttpRequest
 // ==/UserScript==
 
 'use strict';
@@ -95,15 +96,52 @@ function addImageControls(tweetContainer, image) {
 	`)
 }
 
-const supportedContentTypes = {
-		["video/mp4"]: {
+const supportedContentTypes = [
+		{
+			// https://twitter.com/age_jaco/status/623712731456122881/photo/1
+			matcher: (config) => config.content_type == "video/mp4",
 			ext: "mp4",
 			loader:	fetchMP4
 		},
-		["application/x-mpegURL"]: {
+		{
+			// https://twitter.com/MrNobre/status/754144048529625088
+			matcher: (config) => config.content_type == "application/x-mpegURL",
 			ext: "ts",
 			loader: fetchMpegTs
+		},{
+			// https://twitter.com/mkraju/status/755368535619145728
+			matcher: (config) => "vmap_url" in config,
+			ext: "mp4",
+			loader: fetchVmap
 		}
+]
+
+// can't use fetch() API here since it's blocked by CSP
+function fetchVmap(configPromise) {
+	return configPromise.then(config => {
+		return new Promise((resolve, reject) => {
+			GM_xmlhttpRequest({
+				method: "GET",
+				url: config.vmap_url,
+				responseType: "xml",
+				anonymous: true,
+				onload: (rsp) => { resolve(rsp.responseXML) },
+				onerror: (e) => {	reject(e)	}
+			})
+		})
+	}).then(xmlDoc => {
+		let url = xmlDoc.querySelector("*|MediaFile").textContent;
+		return new Promise((resolve, reject) => {
+			GM_xmlhttpRequest({
+				method: "GET",
+				url: url,
+				responseType: "blob",
+				anonymous: true,
+				onload: (rsp) => { resolve(rsp.response) },
+				onerror: (e) => {	reject(e)	}
+			})
+		})
+	})
 }
 
 function fetchMpegTs(configPromise) {
@@ -162,8 +200,10 @@ function addVideoControls(tweetContainer, iframe) {
 		
 		console.log(config)
 		
-		if(!(config.content_type in supportedContentTypes))
-			throw new Error(`fetching for content type "${config.content_type}" not implemented`);
+		
+		
+		if(!supportedContentTypes.find(t => t.matcher(config)))
+			throw new Error(`unknown video configuration, unable to fetch data`);
 		
 		return config
 	})
@@ -191,7 +231,7 @@ function addVideoControls(tweetContainer, iframe) {
 	configPromise.catch(exceptionHandler("An error occured while reading the video metadata"))
 	
 	configPromise.then(config => {
-		const type = supportedContentTypes[config.content_type]
+		const type = supportedContentTypes.find(t => t.matcher(config))
 		
 		let filename = `@${config.user.screen_name} ${config.tweet_id}.${type.ext}`
 		link.download = filename;
@@ -206,7 +246,7 @@ function addVideoControls(tweetContainer, iframe) {
 		e.preventDefault();
 		
 		configPromise.then(config => {
-			const type = supportedContentTypes[config.content_type]
+			const type = supportedContentTypes.find(t => t.matcher(config))
 			return type.loader(configPromise)
 			
 		}).then(blob => {
