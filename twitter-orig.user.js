@@ -68,7 +68,8 @@ function onAddedNode(node) {
 	}
 	
 	if(node.matches(TweetVideoSelector)) {
-		visitOnce(node, () => {
+		// we match an iframe here. once on the parent because iframes get reloaded when scrolling
+		visitOnce(node.parentElement, () => {
 			addVideoControls(node.closest(".tweet"), node)
 		})
 	}
