@@ -3,7 +3,7 @@
 // @namespace   https://github.com/an-electric-sheep/
 // @description Inline-expansion of :orig (full-resolution) twitter images
 // @match       *://*.twitter.com/*
-// @version     0.2.2
+// @version     0.2.3
 // @run-at			document-start
 // @noframes
 // @grant       unsafeWindow
