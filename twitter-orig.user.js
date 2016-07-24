@@ -3,7 +3,7 @@
 // @namespace   https://github.com/an-electric-sheep/
 // @description Inline-expansion of :orig (full-resolution) twitter images
 // @match       *://*.twitter.com/*
-// @version     0.2.3
+// @version     0.3.0
 // @run-at			document-start
 // @noframes
 // @grant       unsafeWindow
@@ -14,10 +14,11 @@
 
 const cssPrefix = "mediatweaksuserscript";
 
-// normal + mobile page
+// normal + mobile page + tweetdeck
 const TweetImageSelector = `
 	.tweet .js-adaptive-photo img ,
-	.Tweet .CroppedPhoto img
+	.Tweet .CroppedPhoto img ,
+  .js-stream-item-content a.js-media-image-link
 `;
 	
 const TweetVideoSelector = ".AdaptiveMedia-video iframe";
@@ -63,7 +64,7 @@ function visitOnce(element, func) {
 function onAddedNode(node) {
 	if(node.matches(TweetImageSelector)) {
 		visitOnce(node, () => {
-			addImageControls(node.closest(".tweet, .Tweet"),node);
+			addImageControls(node.closest(".tweet, .Tweet, .js-stream-item-content"),node);
 		})
 	}
 	
@@ -87,7 +88,13 @@ function controlContainer(target) {
 }
 
 function addImageControls(tweetContainer, image) {
-	let src = image.src;
+	let src;
+	if(image.localName == "a") {
+		src = image.style.backgroundImage.match(/^url\("(.*)"\)$/)[1];
+	} else {
+		src = image.src;		
+	}
+	
 	let origSrc = src + ":orig"
 	
 	let div = controlContainer(tweetContainer);
@@ -271,7 +278,7 @@ function init() {
 	observer.observe(document.documentElement, config);
 	
 	document.addEventListener("DOMContentLoaded", ready)
-	document.addEventListener("click", thumbToggle)
+	document.addEventListener("click", thumbToggle, true)
 	
 } 
 
@@ -283,6 +290,7 @@ function thumbToggle(event) {
 		return;
 	let img = link.querySelector("img");
 
+	event.stopImmediatePropagation();
 	event.preventDefault();
 	
 	if(link.classList.contains(prefixed("-expanded"))) {
