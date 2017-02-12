@@ -2,8 +2,10 @@
 // @name        Twitter Inline Expansion
 // @namespace   https://github.com/an-electric-sheep/
 // @description Inline-expansion of :orig (full-resolution) twitter images
-// @match       *://*.twitter.com/*
-// @version     0.3.0
+// @include     https://twitter.com/*
+// @include     https://mobile.twitter.com/*
+// @include     https://tweetdeck.twitter.com/*
+// @version     0.3.1
 // @run-at			document-start
 // @noframes
 // @grant       unsafeWindow
